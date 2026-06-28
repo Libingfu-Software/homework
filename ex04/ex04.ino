@@ -1,47 +1,58 @@
-const int touchPin = T0;
-const int ledPin = 2;
+#include <Arduino.h>
 
-bool ledState = false;
-bool lastTouchState = false;
-bool currentTouchState = false;
+// ex04 - Touch sensor self-lock switch for ESP32 + Arduino
+// Touch once to toggle the LED, then keep the new state until the next valid touch.
 
+const int touchPin = T0;  // ESP32 touch channel T0 (GPIO4 on most boards)
+const int ledPin = 2;     // Onboard LED
+
+const int touchThreshold = 300;
 const unsigned long debounceDelay = 50;
+
+bool ledState = LOW;
+bool lastRawTouchState = false;
+bool stableTouchState = false;
 unsigned long lastDebounceTime = 0;
 
-const int touchThreshold = 50;  // 根据打印值调整
-
 void setup() {
-  Serial.begin(115200);
-  pinMode(ledPin, OUTPUT);
-  digitalWrite(ledPin, LOW);
+	Serial.begin(115200);
+	pinMode(ledPin, OUTPUT);
+
+	// Initialize the touch state from the current reading to avoid a false toggle at boot.
+	int initialTouchValue = touchRead(touchPin);
+	stableTouchState = (initialTouchValue < touchThreshold);
+	lastRawTouchState = stableTouchState;
+
+	digitalWrite(ledPin, ledState);
+
+	Serial.println("ex04 touch self-lock ready");
+	Serial.print("Initial touch value: ");
+	Serial.println(initialTouchValue);
 }
 
 void loop() {
-  int touchValue = touchRead(touchPin);
-  bool rawState = (touchValue < touchThreshold);
+	int touchValue = touchRead(touchPin);
+	bool rawTouchState = (touchValue < touchThreshold);
 
-  // 打印调试信息
-  Serial.print("Value: ");
-  Serial.print(touchValue);
-  Serial.print("  rawState: ");
-  Serial.println(rawState ? "TOUCH" : "release");
+	if (rawTouchState != lastRawTouchState) {
+		lastDebounceTime = millis();
+		lastRawTouchState = rawTouchState;
+	}
 
-  if (rawState != lastTouchState) {
-    lastDebounceTime = millis();
-  }
+	if ((millis() - lastDebounceTime) > debounceDelay) {
+		if (rawTouchState != stableTouchState) {
+			bool previousStableTouchState = stableTouchState;
+			stableTouchState = rawTouchState;
 
-  if ((millis() - lastDebounceTime) > debounceDelay) {
-    if (rawState != currentTouchState) {
-      currentTouchState = rawState;
-      
-      if (currentTouchState == true && lastTouchState == false) {
-        ledState = !ledState;
-        digitalWrite(ledPin, ledState ? HIGH : LOW);
-        Serial.println("--- LED TOGGLED ---");
-      }
-    }
-  }
+			if (stableTouchState && !previousStableTouchState) {
+				ledState = !ledState;
+				digitalWrite(ledPin, ledState);
 
-  lastTouchState = rawState;
-  delay(200);  // 打印间隔，方便观察
+				Serial.print("Touch toggled LED to: ");
+				Serial.println(ledState ? "ON" : "OFF");
+			}
+		}
+	}
+
+	delay(5);
 }
