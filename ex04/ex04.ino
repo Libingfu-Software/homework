@@ -8,7 +8,7 @@ bool currentTouchState = false;
 const unsigned long debounceDelay = 50;
 unsigned long lastDebounceTime = 0;
 
-const int touchThreshold = 30;  // 根据打印值调整
+const int touchThreshold = 50;  // 根据打印值调整
 
 void setup() {
   Serial.begin(115200);
