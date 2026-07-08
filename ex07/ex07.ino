@@ -1,25 +1,27 @@
 #include <WiFi.h>
 #include <WebServer.h>
 
-const int ledPin = 2;
+// ---------- 三个 LED 引脚 ----------
+const int ledPins[3] = {18, 4, 5};     
 const int pwmFrequency = 5000;
 const int pwmResolution = 8;
 
-const char* wifiSsid = "lisi";
-const char* wifiPassword = "1564922632";
+const char* apSsid = "ESP32_2024117201";
+const char* apPassword = "12345678";
 
 WebServer server(80);
-int brightness = 0;
+int brightness[3] = {0, 0, 0};
 
-String buildPage() {
-  return R"rawliteral(
+
+const char index_html[] = R"rawliteral(
 <!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>ESP32 Web Dimmer</title>
+  <title>ESP32 Triple LED Dimmer</title>
   <style>
+    * { box-sizing: border-box; }
     body {
       margin: 0;
       min-height: 100vh;
@@ -31,7 +33,7 @@ String buildPage() {
       font-family: Arial, sans-serif;
     }
     .card {
-      width: min(92vw, 420px);
+      width: min(92vw, 480px);
       padding: 24px;
       border-radius: 20px;
       background: rgba(15, 23, 42, 0.86);
@@ -39,97 +41,144 @@ String buildPage() {
       box-shadow: 0 20px 60px rgba(0, 0, 0, 0.35);
     }
     h1 {
-      margin: 0 0 10px;
-      font-size: 1.4rem;
+      margin: 0 0 6px;
+      font-size: 1.5rem;
     }
-    p {
-      margin: 0 0 18px;
+    .sub {
+      margin: 0 0 24px;
       color: #94a3b8;
+      font-size: 0.95rem;
     }
-    .value {
+    .led-group {
       display: flex;
-      justify-content: space-between;
-      align-items: center;
-      margin-bottom: 14px;
+      flex-direction: column;
+      gap: 20px;
+      margin-bottom: 12px;
     }
-    input[type="range"] {
-      width: 100%;
+    .led-item {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .led-item label {
+      width: 60px;
+      font-weight: 600;
+      color: #cbd5e1;
+    }
+    .led-item input[type="range"] {
+      flex: 1;
       accent-color: #38bdf8;
+      cursor: pointer;
+    }
+    .led-item .val {
+      min-width: 36px;
+      text-align: center;
+      font-weight: 700;
+      color: #38bdf8;
     }
     .tip {
-      margin-top: 14px;
-      font-size: 0.9rem;
-      color: #cbd5e1;
+      margin-top: 18px;
+      font-size: 0.85rem;
+      color: #64748b;
+      text-align: center;
+      border-top: 1px solid #1e293b;
+      padding-top: 14px;
     }
   </style>
 </head>
 <body>
   <div class="card">
-    <h1>ESP32 Web Dimmer</h1>
-    <p>Drag the slider to change the LED brightness in real time.</p>
-    <div class="value">
-      <span>Brightness</span>
-      <strong id="val">0</strong>
-    </div>
-    <input id="slider" type="range" min="0" max="255" value="0">
-    <div class="tip">The webpage controls the ESP32 PWM output directly.</div>
-  </div>
-  <script>
-    const slider = document.getElementById('slider');
-    const val = document.getElementById('val');
-    let timer = null;
+    <h1>🔦 Triple LED Control</h1>
+    <div class="sub">Drag sliders to adjust brightness (0-255)</div>
 
-    function sendBrightness(value) {
-      fetch('/set?value=' + value).catch(() => {});
+    <div class="led-group">
+      <div class="led-item">
+        <label>LED 1</label>
+        <input type="range" id="led0" min="0" max="255" value="0">
+        <span class="val" id="val0">0</span>
+      </div>
+      <div class="led-item">
+        <label>LED 2</label>
+        <input type="range" id="led1" min="0" max="255" value="0">
+        <span class="val" id="val1">0</span>
+      </div>
+      <div class="led-item">
+        <label>LED 3</label>
+        <input type="range" id="led2" min="0" max="255" value="0">
+        <span class="val" id="val2">0</span>
+      </div>
+    </div>
+
+    <div class="tip">Changes are sent to ESP32 when you release the slider.</div>
+  </div>
+
+  <script>
+    const leds = [
+      { input: document.getElementById('led0'), display: document.getElementById('val0'), index: 0 },
+      { input: document.getElementById('led1'), display: document.getElementById('val1'), index: 1 },
+      { input: document.getElementById('led2'), display: document.getElementById('val2'), index: 2 }
+    ];
+    function sendValue(index, value) {
+      fetch('/set?led=' + index + '&value=' + value).catch(() => {});
     }
 
-    slider.addEventListener('input', () => {
-      val.textContent = slider.value;
-      clearTimeout(timer);
-      timer = setTimeout(() => sendBrightness(slider.value), 20);
+    leds.forEach((led, i) => {
+      led.input.addEventListener('input', () => {
+        const v = parseInt(led.input.value);
+        led.display.textContent = v;
+      });
+
+      led.input.addEventListener('change', () => {
+        sendValue(led.index, parseInt(led.input.value));
+      });
     });
   </script>
 </body>
 </html>
 )rawliteral";
-}
 
 void handleRoot() {
-  server.send(200, "text/html; charset=utf-8", buildPage());
+  server.send(200, "text/html; charset=utf-8", index_html);
 }
 
 void handleSet() {
-  if (server.hasArg("value")) {
-    brightness = constrain(server.arg("value").toInt(), 0, 255);
-    ledcWrite(ledPin, brightness);
+  if (server.hasArg("led") && server.hasArg("value")) {
+    int ledIndex = server.arg("led").toInt();
+    int val = constrain(server.arg("value").toInt(), 0, 255);
+    if (ledIndex >= 0 && ledIndex < 3) {
+      brightness[ledIndex] = val;
+      ledcWrite(ledPins[ledIndex], val);
+    }
   }
-
-  server.send(200, "text/plain; charset=utf-8", String(brightness));
+  char resp[16];
+  snprintf(resp, sizeof(resp), "%d,%d,%d", brightness[0], brightness[1], brightness[2]);
+  server.send(200, "text/plain; charset=utf-8", resp);
 }
 
 void setup() {
   Serial.begin(115200);
 
-  ledcAttach(ledPin, pwmFrequency, pwmResolution);
-  ledcWrite(ledPin, brightness);
-
-  WiFi.mode(WIFI_STA);
-  WiFi.begin(wifiSsid, wifiPassword);
-
-  Serial.print("Connecting to Wi-Fi");
-  while (WiFi.status() != WL_CONNECTED) {
-    delay(500);
-    Serial.print(".");
+  for (int i = 0; i < 3; i++) {
+    ledcAttach(ledPins[i], pwmFrequency, pwmResolution);
+    ledcWrite(ledPins[i], 0);
   }
-  Serial.println();
+
+  WiFi.mode(WIFI_AP);
+  if (!WiFi.softAP(apSsid, apPassword)) {
+    Serial.println("AP 启动失败�?");
+    while (1) delay(100);
+  }
+  Serial.println("AP 模式已启�?");
 
   server.on("/", handleRoot);
   server.on("/set", handleSet);
   server.begin();
 
   Serial.println("Web dimmer ready");
-  Serial.print("Open this address in your browser: http://");
-  Serial.println(WiFi.localIP());
+  Serial.print("连接到热�?: ");
+  Serial.println(apSsid);
+  Serial.print("浏览器访�?: http://");
+  Serial.println(WiFi.softAPIP());
 }
 
 void loop() {

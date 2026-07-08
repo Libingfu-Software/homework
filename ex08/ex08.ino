@@ -8,9 +8,8 @@ const int touchThreshold = 300;
 const unsigned long debounceDelay = 50;
 const unsigned long alarmBlinkInterval = 120;
 
-// 替换为 STA 模式的 WiFi 凭据
-const char* wifiSsid = "lisi";
-const char* wifiPassword = "1564922632";
+const char* apSsid = "ESP32-2024117201";
+const char* apPassword = "12345678";
 
 WebServer server(80);
 
@@ -21,6 +20,7 @@ bool stableTouchState = false;
 unsigned long lastDebounceTime = 0;
 unsigned long lastBlinkTime = 0;
 bool ledState = LOW;
+int displayedTouchValue = -1;
 
 String buildPage() {
   return R"rawliteral(
@@ -69,6 +69,14 @@ String buildPage() {
       grid-template-columns: 1fr 1fr;
       gap: 12px;
     }
+    .touch {
+      margin-top: 12px;
+      padding: 12px;
+      border-radius: 12px;
+      background: rgba(15, 23, 42, 0.85);
+      color: #fbbf24;
+      font-weight: 700;
+    }
     button {
       border: 0;
       border-radius: 12px;
@@ -85,8 +93,9 @@ String buildPage() {
 <body>
   <div class="card">
     <h1>ESP32 Security Alarm</h1>
-    <p>Press Arm to enable alarm mode. Touch the sensor to trigger a latched alarm.</p>
+    <p>Connect to the ESP32 AP and use the buttons below. Touch the sensor to trigger a latched alarm.</p>
     <div class="status" id="status">Status: loading...</div>
+    <div class="touch" id="touch">Touch: waiting...</div>
     <div class="buttons">
       <button class="arm" onclick="setState('arm')">Arm</button>
       <button class="disarm" onclick="setState('disarm')">Disarm</button>
@@ -94,6 +103,7 @@ String buildPage() {
   </div>
   <script>
     const statusBox = document.getElementById('status');
+    const touchBox = document.getElementById('touch');
 
     function refreshStatus() {
       fetch('/status')
@@ -102,14 +112,26 @@ String buildPage() {
         .catch(() => { statusBox.textContent = 'Status: offline'; });
     }
 
+    function refreshTouch() {
+      fetch('/touch')
+        .then(response => response.text())
+        .then(text => { touchBox.textContent = text; })
+        .catch(() => { touchBox.textContent = 'Touch: offline'; });
+    }
+
     function setState(action) {
       fetch('/' + action)
-        .then(() => refreshStatus())
+        .then(() => {
+          refreshStatus();
+          refreshTouch();
+        })
         .catch(() => {});
     }
 
     refreshStatus();
+    refreshTouch();
     setInterval(refreshStatus, 1000);
+    setInterval(refreshTouch, 1000);
   </script>
 </body>
 </html>
@@ -138,6 +160,17 @@ void handleStatus() {
   server.send(200, "text/plain; charset=utf-8", status);
 }
 
+void handleTouch() {
+  String touch = "Touch: ";
+  if (displayedTouchValue >= 0) {
+    touch += String(displayedTouchValue);
+  } else {
+    touch += "waiting...";
+  }
+
+  server.send(200, "text/plain; charset=utf-8", touch);
+}
+
 void handleArm() {
   armed = true;
   server.send(200, "text/plain; charset=utf-8", "ARMED");
@@ -162,28 +195,29 @@ void setup() {
   int initialTouchValue = touchRead(touchPin);
   stableTouchState = (initialTouchValue < touchThreshold);
   lastRawTouchState = stableTouchState;
-
-  // 改为 STA 模式并连接指定 WiFi
-  WiFi.mode(WIFI_STA);
-  WiFi.begin(wifiSsid, wifiPassword);
-  Serial.print("Connecting to WiFi");
-  while (WiFi.status() != WL_CONNECTED) {
-    delay(500);
-    Serial.print(".");
+  if (initialTouchValue < touchThreshold) {
+    displayedTouchValue = initialTouchValue;
   }
-  Serial.println("\nWiFi connected");
+
+  WiFi.mode(WIFI_AP);
+  WiFi.softAP(apSsid, apPassword);
+  IPAddress apIP = WiFi.softAPIP();
+  Serial.println("AP mode started");
+  Serial.print("SSID: ");
+  Serial.println(apSsid);
   Serial.print("IP address: ");
-  Serial.println(WiFi.localIP());
+  Serial.println(apIP);
 
   server.on("/", handleRoot);
   server.on("/status", handleStatus);
+  server.on("/touch", handleTouch);
   server.on("/arm", handleArm);
   server.on("/disarm", handleDisarm);
   server.begin();
 
   Serial.println("Security alarm ready");
   Serial.print("Open: http://");
-  Serial.println(WiFi.localIP());
+  Serial.println(apIP);
 }
 
 void loop() {
@@ -191,6 +225,10 @@ void loop() {
 
   int touchValue = touchRead(touchPin);
   bool rawTouchState = (touchValue < touchThreshold);
+
+  if (touchValue < touchThreshold) {
+    displayedTouchValue = touchValue;
+  }
 
   if (rawTouchState != lastRawTouchState) {
     lastDebounceTime = millis();
